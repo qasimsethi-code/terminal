@@ -1,0 +1,297 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "description": "Power Automate cloud flow definition for VIN automation. Import via Power Automate > My flows > Import > Package (.zip).",
+  "flowDisplayName": "VIN Check Orchestrator",
+  "flowDescription": "Triggered from Power Apps. Orchestrates Google, MOI UAE, and Autorola VIN checks via PAD. Writes results and audit log to SharePoint.",
+  "trigger": {
+    "type": "PowerApps",
+    "name": "manual",
+    "inputs": {
+      "schema": {
+        "type": "object",
+        "required": ["vin", "requestedBy", "appraisalId"],
+        "properties": {
+          "vin": {
+            "type": "string",
+            "maxLength": 17,
+            "minLength": 17,
+            "description": "17-character VIN — validated in Power App before trigger"
+          },
+          "requestedBy": {
+            "type": "string",
+            "description": "UPN of the user submitting the request"
+          },
+          "appraisalId": {
+            "type": "string",
+            "description": "SharePoint ID of the Vehicle_Appraisals record"
+          }
+        }
+      }
+    }
+  },
+  "actions": [
+    {
+      "id": "Initialize_RunId",
+      "type": "InitializeVariable",
+      "inputs": {
+        "name": "RunId",
+        "type": "string",
+        "value": "@{guid()}"
+      }
+    },
+    {
+      "id": "Create_Request_Record",
+      "type": "SharePoint.CreateItem",
+      "runAfter": ["Initialize_RunId"],
+      "inputs": {
+        "site": "@parameters('SharePointSiteUrl')",
+        "list": "VIN_Check_Requests",
+        "item": {
+          "VIN": "@triggerBody()['vin']",
+          "RequestedBy": "@triggerBody()['requestedBy']",
+          "RequestedDate": "@utcNow()",
+          "Status": "InProgress",
+          "RunId": "@variables('RunId')"
+        }
+      }
+    },
+    {
+      "id": "Write_Audit_RequestReceived",
+      "type": "SharePoint.CreateItem",
+      "runAfter": ["Create_Request_Record"],
+      "inputs": {
+        "site": "@parameters('SharePointSiteUrl')",
+        "list": "VIN_Audit_Log",
+        "item": {
+          "RunId": "@variables('RunId')",
+          "VIN": "@triggerBody()['vin']",
+          "Source": "System",
+          "Action": "RequestReceived",
+          "Outcome": "Success",
+          "Timestamp": "@utcNow()",
+          "FlowRunUrl": "@concat('https://make.powerautomate.com/environments/', parameters('EnvironmentId'), '/flows/', workflow().name, '/runs/', workflow().run.name)"
+        }
+      }
+    },
+    {
+      "id": "Run_PAD_VIN_Check",
+      "type": "DesktopFlow.RunFlow",
+      "runAfter": ["Write_Audit_RequestReceived"],
+      "inputs": {
+        "flowId": "@parameters('PADFlowId')",
+        "connectionName": "@parameters('PADConnectionName')",
+        "runMode": "Attended",
+        "inputs": {
+          "InputVIN": "@triggerBody()['vin']",
+          "RunId": "@variables('RunId')",
+          "SharePointSiteUrl": "@parameters('SharePointSiteUrl')",
+          "EvidenceFolderPath": "@parameters('EvidenceFolderPath')"
+        }
+      },
+      "runtimeConfiguration": {
+        "paginationPolicy": {
+          "minimumItemCount": 1
+        }
+      }
+    },
+    {
+      "id": "Check_PAD_Status",
+      "type": "Condition",
+      "runAfter": ["Run_PAD_VIN_Check"],
+      "expression": {
+        "and": [
+          {
+            "equals": [
+              "@outputs('Run_PAD_VIN_Check')?['body/PADStatus']",
+              "Complete"
+            ]
+          }
+        ]
+      },
+      "actions": {
+        "true": [
+          {
+            "id": "Update_Request_Complete",
+            "type": "SharePoint.UpdateItem",
+            "inputs": {
+              "site": "@parameters('SharePointSiteUrl')",
+              "list": "VIN_Check_Requests",
+              "id": "@outputs('Create_Request_Record')?['body/ID']",
+              "item": {
+                "Status": "@outputs('Run_PAD_VIN_Check')?['body/Disposition']"
+              }
+            }
+          },
+          {
+            "id": "Create_Result_Record",
+            "type": "SharePoint.CreateItem",
+            "runAfter": ["Update_Request_Complete"],
+            "inputs": {
+              "site": "@parameters('SharePointSiteUrl')",
+              "list": "VIN_Check_Results",
+              "item": {
+                "VIN": "@triggerBody()['vin']",
+                "RunId": "@variables('RunId')",
+                "RequestId": "@outputs('Create_Request_Record')?['body/ID']",
+                "GoogleResult": "@outputs('Run_PAD_VIN_Check')?['body/GoogleResultText']",
+                "GoogleScreenshotPath": "@outputs('Run_PAD_VIN_Check')?['body/GoogleScreenshotPath']",
+                "MOIAccidentCount": "@outputs('Run_PAD_VIN_Check')?['body/MOIAccidentCount']",
+                "MOIResult": "@outputs('Run_PAD_VIN_Check')?['body/MOIResultText']",
+                "MOIScreenshotPath": "@outputs('Run_PAD_VIN_Check')?['body/MOIScreenshotPath']",
+                "AutorolaVINMatched": "@outputs('Run_PAD_VIN_Check')?['body/AutorolaVINMatched']",
+                "AutorolaCommentWritten": "@outputs('Run_PAD_VIN_Check')?['body/AutorolaCommentWritten']",
+                "AutorolaScreenshotPath": "@outputs('Run_PAD_VIN_Check')?['body/AutorolaScreenshotPath']",
+                "Disposition": "@outputs('Run_PAD_VIN_Check')?['body/Disposition']",
+                "CompletedDate": "@utcNow()"
+              }
+            }
+          },
+          {
+            "id": "Update_Appraisal_Record",
+            "type": "SharePoint.UpdateItem",
+            "runAfter": ["Create_Result_Record"],
+            "inputs": {
+              "site": "@parameters('SharePointSiteUrl')",
+              "list": "Vehicle_Appraisals",
+              "id": "@triggerBody()['appraisalId']",
+              "item": {
+                "AppraisalStatus": "VINCheckComplete",
+                "VINCheckRunId": "@variables('RunId')",
+                "VINDisposition": "@outputs('Run_PAD_VIN_Check')?['body/Disposition']",
+                "LastCheckedDate": "@utcNow()"
+              }
+            }
+          },
+          {
+            "id": "Write_Audit_RunComplete",
+            "type": "SharePoint.CreateItem",
+            "runAfter": ["Update_Appraisal_Record"],
+            "inputs": {
+              "site": "@parameters('SharePointSiteUrl')",
+              "list": "VIN_Audit_Log",
+              "item": {
+                "RunId": "@variables('RunId')",
+                "VIN": "@triggerBody()['vin']",
+                "Source": "System",
+                "Action": "RunComplete",
+                "Outcome": "Success",
+                "Detail": "@concat('Disposition: ', outputs('Run_PAD_VIN_Check')?['body/Disposition'])",
+                "Timestamp": "@utcNow()",
+                "FlowRunUrl": "@concat('https://make.powerautomate.com/environments/', parameters('EnvironmentId'), '/flows/', workflow().name, '/runs/', workflow().run.name)"
+              }
+            }
+          }
+        ],
+        "false": [
+          {
+            "id": "Update_Request_ManualReview",
+            "type": "SharePoint.UpdateItem",
+            "inputs": {
+              "site": "@parameters('SharePointSiteUrl')",
+              "list": "VIN_Check_Requests",
+              "id": "@outputs('Create_Request_Record')?['body/ID']",
+              "item": {
+                "Status": "ManualReview",
+                "Notes": "@outputs('Run_PAD_VIN_Check')?['body/ManualReviewReason']"
+              }
+            }
+          },
+          {
+            "id": "Write_Audit_ManualReview",
+            "type": "SharePoint.CreateItem",
+            "runAfter": ["Update_Request_ManualReview"],
+            "inputs": {
+              "site": "@parameters('SharePointSiteUrl')",
+              "list": "VIN_Audit_Log",
+              "item": {
+                "RunId": "@variables('RunId')",
+                "VIN": "@triggerBody()['vin']",
+                "Source": "System",
+                "Action": "ManualReviewTriggered",
+                "Outcome": "ManualReview",
+                "Detail": "@outputs('Run_PAD_VIN_Check')?['body/ManualReviewReason']",
+                "Timestamp": "@utcNow()",
+                "FlowRunUrl": "@concat('https://make.powerautomate.com/environments/', parameters('EnvironmentId'), '/flows/', workflow().name, '/runs/', workflow().run.name)"
+              }
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "errorHandling": {
+    "scope": "RunFailed",
+    "actions": [
+      {
+        "id": "Update_Request_Failed",
+        "type": "SharePoint.UpdateItem",
+        "inputs": {
+          "site": "@parameters('SharePointSiteUrl')",
+          "list": "VIN_Check_Requests",
+          "id": "@outputs('Create_Request_Record')?['body/ID']",
+          "item": {
+            "Status": "Failed"
+          }
+        }
+      },
+      {
+        "id": "Write_Audit_RunFailed",
+        "type": "SharePoint.CreateItem",
+        "inputs": {
+          "site": "@parameters('SharePointSiteUrl')",
+          "list": "VIN_Audit_Log",
+          "item": {
+            "RunId": "@variables('RunId')",
+            "VIN": "@triggerBody()['vin']",
+            "Source": "System",
+            "Action": "RunFailed",
+            "Outcome": "Failed",
+            "Detail": "@{result('Run_PAD_VIN_Check')}",
+            "Timestamp": "@utcNow()"
+          }
+        }
+      }
+    ]
+  },
+  "parameters": {
+    "SharePointSiteUrl": {
+      "type": "string",
+      "description": "Full URL of the SharePoint site hosting VIN workflow lists",
+      "example": "https://alfuttaimgroup.sharepoint.com/sites/VINAutomation"
+    },
+    "PADFlowId": {
+      "type": "string",
+      "description": "GUID of the registered PAD desktop flow in the same environment"
+    },
+    "PADConnectionName": {
+      "type": "string",
+      "description": "Name of the desktop flows connection pointing to the registered PAD machine"
+    },
+    "EvidenceFolderPath": {
+      "type": "string",
+      "description": "SharePoint document library path where screenshots are uploaded",
+      "example": "/sites/VINAutomation/VINEvidence"
+    },
+    "EnvironmentId": {
+      "type": "string",
+      "description": "Power Platform environment GUID — used to construct run trace URLs"
+    }
+  },
+  "connections": [
+    {
+      "name": "SharePoint",
+      "connector": "shared_sharepointonline",
+      "required": true
+    },
+    {
+      "name": "DesktopFlows",
+      "connector": "shared_uiflow",
+      "required": true
+    },
+    {
+      "name": "PowerApps",
+      "connector": "shared_powerapps",
+      "required": true
+    }
+  ]
+}

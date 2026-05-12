@@ -1,0 +1,73 @@
+{
+  "listTitle": "VIN_Audit_Log",
+  "description": "Append-only audit record written by the cloud flow after each source check. Never manually edited.",
+  "columns": [
+    {
+      "name": "RunId",
+      "type": "Text",
+      "required": true,
+      "description": "GUID correlating all log entries for one VIN check run"
+    },
+    {
+      "name": "VIN",
+      "type": "Text",
+      "required": true,
+      "maxLength": 17
+    },
+    {
+      "name": "Source",
+      "type": "Choice",
+      "required": true,
+      "choices": ["Google", "MOI_UAE", "Autorola", "System"],
+      "description": "Which external source this log entry covers"
+    },
+    {
+      "name": "Action",
+      "type": "Choice",
+      "required": true,
+      "choices": [
+        "RequestReceived",
+        "BrowserOpened",
+        "VINSearched",
+        "ResultExtracted",
+        "ScreenshotCaptured",
+        "CommentWritten",
+        "VINMismatch",
+        "DuplicateDetected",
+        "ManualReviewTriggered",
+        "RunComplete",
+        "RunFailed"
+      ]
+    },
+    {
+      "name": "Outcome",
+      "type": "Choice",
+      "required": true,
+      "choices": ["Success", "Skipped", "ManualReview", "Failed"]
+    },
+    {
+      "name": "Detail",
+      "type": "Note",
+      "required": false,
+      "description": "Additional context, error message, or extracted text snippet"
+    },
+    {
+      "name": "Timestamp",
+      "type": "DateTime",
+      "required": true,
+      "description": "UTC timestamp when this log entry was created"
+    },
+    {
+      "name": "FlowRunUrl",
+      "type": "Text",
+      "required": false,
+      "description": "Direct link to the Power Automate cloud flow run for traceability"
+    }
+  ],
+  "permissions": {
+    "flowServiceAccount": "Contribute",
+    "endUsers": "None — no direct access",
+    "auditStaff": "Read",
+    "note": "Do NOT grant Edit or Delete to any user. Append-only via flow connection only."
+  }
+}

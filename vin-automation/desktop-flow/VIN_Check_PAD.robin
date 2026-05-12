@@ -1,0 +1,212 @@
+@@summary: VIN Check Desktop Flow
+@@description: Attended PAD flow. Checks Google, MOI UAE Accidents Inquiry, and Autorola Fleet Monitor for a given VIN. Returns structured results to the cloud flow.
+@@version: 1.0.0
+@@mode: Attended
+
+# ── Input parameters (set by calling cloud flow) ──────────────────────────────
+# InputVIN          : Text   — 17-character VIN to check
+# RunId             : Text   — GUID from cloud flow for audit correlation
+# SharePointSiteUrl : Text   — Base SharePoint site URL
+# EvidenceFolderPath: Text   — SharePoint path to upload screenshots
+
+# ── Output parameters (returned to cloud flow) ────────────────────────────────
+# PADStatus             : Text    — "Complete" or "ManualReview"
+# ManualReviewReason    : Text    — populated if PADStatus = ManualReview
+# Disposition           : Text    — "Clear" | "TradeOnly" | "ManualReview"
+# GoogleResultText      : Text
+# GoogleScreenshotPath  : Text
+# MOIAccidentCount      : Number
+# MOIResultText         : Text
+# MOIScreenshotPath     : Text
+# AutorolaVINMatched    : Boolean
+# AutorolaCommentWritten: Boolean
+# AutorolaScreenshotPath: Text
+
+# ── Variables ─────────────────────────────────────────────────────────────────
+SET PADStatus TO "ManualReview"
+SET ManualReviewReason TO ""
+SET Disposition TO "Pending"
+SET GoogleResultText TO ""
+SET GoogleScreenshotPath TO ""
+SET MOIAccidentCount TO 0
+SET MOIResultText TO ""
+SET MOIScreenshotPath TO ""
+SET AutorolaVINMatched TO False
+SET AutorolaCommentWritten TO False
+SET AutorolaScreenshotPath TO ""
+SET EvidenceBasePath TO EvidenceFolderPath & "/" & RunId
+SET HasAccident TO False
+SET HasSalvage TO False
+
+# ── Guard: validate VIN length before any browser work ────────────────────────
+IF (Text.Length(InputVIN) <> 17) THEN
+    SET ManualReviewReason TO "Invalid VIN length: " & Text.Length(InputVIN)
+    GOTO OutputResults
+END IF
+
+# ════════════════════════════════════════════════════════════════════════════
+# STEP 1 — GOOGLE VIN CHECK
+# ════════════════════════════════════════════════════════════════════════════
+BLOCK "Google VIN Search"
+    Launch Chrome
+    WebBrowser.LaunchChrome Url: "https://www.google.com/search?q=" & InputVIN NewInstance=> GoogleBrowser
+
+    # Wait for results page to load
+    WebBrowser.WaitForPageLoad Browser: GoogleBrowser Timeout: 30
+
+    # Extract visible search result text from the main results container
+    ON ERROR GOTO GoogleFailed
+        WebBrowser.ExtractText Browser: GoogleBrowser CssSelector: "#search" Text=> GoogleResultText
+        IF (Text.Contains(GoogleResultText, "salvage", IgnoreCase: True)) THEN
+            SET HasSalvage TO True
+        END IF
+        IF (Text.Contains(GoogleResultText, "accident", IgnoreCase: True)) THEN
+            SET HasAccident TO True
+        END IF
+    END ON ERROR
+
+    # Capture evidence screenshot
+    TakeScreenshot.FromWindow Window: GoogleBrowser ImageFile: EvidenceBasePath & "_Google.png"
+    SET GoogleScreenshotPath TO EvidenceBasePath & "_Google.png"
+
+    # Upload screenshot to SharePoint
+    SharePoint.UploadFile SiteUrl: SharePointSiteUrl FolderPath: EvidenceFolderPath FileName: RunId & "_Google.png" FilePath: GoogleScreenshotPath
+
+    WebBrowser.CloseWindow Browser: GoogleBrowser
+    GOTO MOICheck
+
+GoogleFailed:
+    SET ManualReviewReason TO "Google extraction failed for VIN: " & InputVIN
+    WebBrowser.CloseWindow Browser: GoogleBrowser
+    GOTO OutputResults
+END BLOCK
+
+# ════════════════════════════════════════════════════════════════════════════
+# STEP 2 — MOI UAE ACCIDENTS INQUIRY
+# ════════════════════════════════════════════════════════════════════════════
+LABEL MOICheck
+BLOCK "MOI UAE Accident Check"
+    WebBrowser.LaunchEdge Url: "https://www.moi.gov.ae/en/eservices/RTA/AccidentReport.aspx" NewInstance=> MOIBrowser
+
+    WebBrowser.WaitForPageLoad Browser: MOIBrowser Timeout: 30
+
+    # HUMAN STEP: operator completes CAPTCHA and submits VIN/plate manually if required
+    Display.ShowMessageDialog Title: "MOI UAE — Manual Step Required" Message: "1. Enter vehicle details in the MOI page.\n2. Complete any CAPTCHA.\n3. Click Search.\n4. When results are visible, click OK here to capture evidence.\n\nVIN: " & InputVIN Buttons: OK
+
+    ON ERROR GOTO MOIFailed
+        WebBrowser.ExtractText Browser: MOIBrowser CssSelector: ".results-container" Text=> MOIResultText
+
+        # Count accident references as a simple integer proxy
+        Text.OccurrenceCount Text: MOIResultText SearchText: "Accident" IgnoreCase: True Count=> MOIAccidentCount
+
+        IF (MOIAccidentCount > 0) THEN
+            SET HasAccident TO True
+        END IF
+    END ON ERROR
+
+    TakeScreenshot.FromWindow Window: MOIBrowser ImageFile: EvidenceBasePath & "_MOI.png"
+    SET MOIScreenshotPath TO EvidenceBasePath & "_MOI.png"
+
+    SharePoint.UploadFile SiteUrl: SharePointSiteUrl FolderPath: EvidenceFolderPath FileName: RunId & "_MOI.png" FilePath: MOIScreenshotPath
+
+    WebBrowser.CloseWindow Browser: MOIBrowser
+    GOTO AutorolaCheck
+
+MOIFailed:
+    # MOI unavailable is a soft failure — log and continue; do not abort run
+    SET MOIResultText TO "MOI check skipped — page unavailable or extraction failed"
+    SET ManualReviewReason TO "MOI check requires manual review"
+    WebBrowser.CloseWindow Browser: MOIBrowser
+    GOTO AutorolaCheck
+END BLOCK
+
+# ════════════════════════════════════════════════════════════════════════════
+# STEP 3 — AUTOROLA FLEET MONITOR
+# ════════════════════════════════════════════════════════════════════════════
+LABEL AutorolaCheck
+BLOCK "Autorola Fleet Monitor VIN Check"
+    # Requires an active signed-in Autorola session in Edge profile
+    WebBrowser.LaunchEdge Url: "https://www.autorola.ae/fleet-monitor" NewInstance=> AutorolaBrowser
+
+    WebBrowser.WaitForPageLoad Browser: AutorolaBrowser Timeout: 30
+
+    # HUMAN STEP: if not already signed in, operator logs in manually
+    Display.ShowMessageDialog Title: "Autorola Fleet Monitor" Message: "If not signed in, please sign in now.\nDo NOT use saved automation credentials.\n\nWhen the Fleet Monitor list is visible, click OK." Buttons: OK
+
+    ON ERROR GOTO AutorolaFailed
+        # Search for VIN in the fleet search box
+        WebBrowser.FillField Browser: AutorolaBrowser Selector: "input[placeholder*='VIN'], input[name*='vin'], input[id*='vin']" Value: InputVIN
+        WebBrowser.Click Browser: AutorolaBrowser Selector: "button[type='submit'], button.search-btn"
+        WebBrowser.WaitForPageLoad Browser: AutorolaBrowser Timeout: 30
+
+        # Extract the first result row VIN to verify exact match
+        WebBrowser.ExtractText Browser: AutorolaBrowser CssSelector: ".fleet-row:first-child .vin-cell, td.vin" Text=> AutorolaFoundVIN
+
+        IF (AutorolaFoundVIN = InputVIN) THEN
+            SET AutorolaVINMatched TO True
+
+            # Build the internal comment to append
+            SET InternalComment TO "[VIN-AUTO] RunId:" & RunId & " | Checked:" & DateTime.Now & " | Google:" & (IF HasAccident OR HasSalvage THEN "FLAGS" ELSE "Clear") & " | MOI Accidents:" & MOIAccidentCount
+
+            # Write internal comment into Autorola
+            WebBrowser.Click Browser: AutorolaBrowser Selector: ".fleet-row:first-child .internal-comment-btn, button.edit-comment"
+            WebBrowser.WaitForElement Browser: AutorolaBrowser Selector: "textarea.internal-comment, textarea[name*='comment']" Timeout: 10
+
+            # Read current comment content to preserve existing text
+            WebBrowser.ExtractText Browser: AutorolaBrowser CssSelector: "textarea.internal-comment, textarea[name*='comment']" Text=> ExistingComment
+            SET UpdatedComment TO ExistingComment & "\n" & InternalComment
+
+            WebBrowser.FillField Browser: AutorolaBrowser Selector: "textarea.internal-comment, textarea[name*='comment']" Value: UpdatedComment
+            WebBrowser.Click Browser: AutorolaBrowser Selector: "button.save-comment, button[type='submit']"
+            WebBrowser.WaitForPageLoad Browser: AutorolaBrowser Timeout: 15
+
+            SET AutorolaCommentWritten TO True
+        ELSE
+            # VIN mismatch — do not write; trigger manual review
+            SET ManualReviewReason TO "Autorola VIN mismatch. Expected: " & InputVIN & " Found: " & AutorolaFoundVIN
+            TakeScreenshot.FromWindow Window: AutorolaBrowser ImageFile: EvidenceBasePath & "_Autorola_Mismatch.png"
+            SET AutorolaScreenshotPath TO EvidenceBasePath & "_Autorola_Mismatch.png"
+            SharePoint.UploadFile SiteUrl: SharePointSiteUrl FolderPath: EvidenceFolderPath FileName: RunId & "_Autorola_Mismatch.png" FilePath: AutorolaScreenshotPath
+            WebBrowser.CloseWindow Browser: AutorolaBrowser
+            SET PADStatus TO "ManualReview"
+            GOTO OutputResults
+        END IF
+    END ON ERROR
+
+    TakeScreenshot.FromWindow Window: AutorolaBrowser ImageFile: EvidenceBasePath & "_Autorola.png"
+    SET AutorolaScreenshotPath TO EvidenceBasePath & "_Autorola.png"
+    SharePoint.UploadFile SiteUrl: SharePointSiteUrl FolderPath: EvidenceFolderPath FileName: RunId & "_Autorola.png" FilePath: AutorolaScreenshotPath
+
+    WebBrowser.CloseWindow Browser: AutorolaBrowser
+    GOTO DetermineDisposition
+
+AutorolaFailed:
+    SET ManualReviewReason TO "Autorola page unavailable or selector changed. Manual review required."
+    WebBrowser.CloseWindow Browser: AutorolaBrowser
+    SET PADStatus TO "ManualReview"
+    GOTO OutputResults
+END BLOCK
+
+# ════════════════════════════════════════════════════════════════════════════
+# STEP 4 — DETERMINE FINAL DISPOSITION
+# ════════════════════════════════════════════════════════════════════════════
+LABEL DetermineDisposition
+IF (HasAccident OR HasSalvage) THEN
+    SET Disposition TO "TradeOnly"
+ELSE IF (ManualReviewReason <> "") THEN
+    SET Disposition TO "ManualReview"
+ELSE
+    SET Disposition TO "Clear"
+END IF
+
+IF (Disposition = "ManualReview") THEN
+    SET PADStatus TO "ManualReview"
+ELSE
+    SET PADStatus TO "Complete"
+END IF
+
+# ════════════════════════════════════════════════════════════════════════════
+# OUTPUT RESULTS
+# ════════════════════════════════════════════════════════════════════════════
+LABEL OutputResults
+# All output variables are already set — the cloud flow reads them via the PAD output mapping
