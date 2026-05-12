@@ -1,0 +1,44 @@
+{
+  "_comment": "Fill in all values before importing the cloud flow. Store this file securely — do not commit real credentials.",
+  "environment": {
+    "PowerPlatformEnvironmentId": "<your-environment-guid>",
+    "PowerPlatformEnvironmentName": "<your-environment-display-name>",
+    "Region": "UAE"
+  },
+  "sharePoint": {
+    "SiteUrl": "https://alfuttaimgroup.sharepoint.com/sites/VINAutomation",
+    "EvidenceFolderPath": "/sites/VINAutomation/VINEvidence",
+    "Lists": {
+      "Requests": "VIN_Check_Requests",
+      "Results": "VIN_Check_Results",
+      "AuditLog": "VIN_Audit_Log",
+      "Appraisals": "Vehicle_Appraisals"
+    }
+  },
+  "desktopFlow": {
+    "PADFlowId": "<guid-of-registered-pad-flow>",
+    "PADConnectionName": "<name-of-desktop-flows-connection>",
+    "MachineName": "QASIM-COE-VIN-PAD-01",
+    "RunMode": "Attended"
+  },
+  "connections": {
+    "SharePoint": "shared_sharepointonline",
+    "DesktopFlows": "shared_uiflow",
+    "PowerApps": "shared_powerapps"
+  },
+  "governance": {
+    "RequireExactVINMatch": true,
+    "DuplicateVINPolicy": "ManualReview",
+    "AccidentDisposition": "TradeOnly",
+    "SalvageDisposition": "TradeOnly",
+    "AllowCAPTCHABypass": false,
+    "AllowCredentialAutomation": false,
+    "AttendedModeRequired": true,
+    "EvidenceScreenshotRequired": true
+  },
+  "approvedSources": {
+    "GoogleVINSearchPattern": "https://www.google.com/search?q={VIN}",
+    "MOIAccidentsInquiry": "https://www.moi.gov.ae/en/eservices/RTA/AccidentReport.aspx",
+    "AutorolaFleetMonitor": "https://www.autorola.ae/fleet-monitor"
+  }
+}

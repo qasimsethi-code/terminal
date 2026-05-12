@@ -1,0 +1,92 @@
+{
+  "listTitle": "VIN_Check_Results",
+  "description": "Stores enriched results for each completed VIN check",
+  "columns": [
+    {
+      "name": "VIN",
+      "type": "Text",
+      "required": true,
+      "maxLength": 17
+    },
+    {
+      "name": "RunId",
+      "type": "Text",
+      "required": true,
+      "description": "Links back to VIN_Check_Requests and VIN_Audit_Log"
+    },
+    {
+      "name": "RequestId",
+      "type": "Lookup",
+      "required": true,
+      "lookupList": "VIN_Check_Requests",
+      "lookupField": "ID"
+    },
+    {
+      "name": "GoogleResult",
+      "type": "Note",
+      "required": false,
+      "description": "Raw text extracted from Google VIN search result page"
+    },
+    {
+      "name": "GoogleScreenshotPath",
+      "type": "Text",
+      "required": false,
+      "description": "SharePoint relative path to the evidence screenshot"
+    },
+    {
+      "name": "MOIAccidentCount",
+      "type": "Number",
+      "required": false,
+      "description": "Number of accidents reported by MOI UAE inquiry"
+    },
+    {
+      "name": "MOIResult",
+      "type": "Note",
+      "required": false,
+      "description": "Raw text from MOI UAE Accidents Inquiry response"
+    },
+    {
+      "name": "MOIScreenshotPath",
+      "type": "Text",
+      "required": false,
+      "description": "SharePoint relative path to the MOI evidence screenshot"
+    },
+    {
+      "name": "AutorolaVINMatched",
+      "type": "Boolean",
+      "required": false,
+      "description": "True only if the Autorola Fleet Monitor row VIN exactly matches input VIN"
+    },
+    {
+      "name": "AutorolaCommentWritten",
+      "type": "Boolean",
+      "required": false,
+      "description": "True if the internal comment was successfully appended to Autorola"
+    },
+    {
+      "name": "AutorolaScreenshotPath",
+      "type": "Text",
+      "required": false,
+      "description": "SharePoint relative path to the Autorola evidence screenshot"
+    },
+    {
+      "name": "Disposition",
+      "type": "Choice",
+      "required": true,
+      "choices": ["Clear", "TradeOnly", "ManualReview", "Pending"],
+      "defaultValue": "Pending",
+      "description": "Clear = no flags; TradeOnly = accident/salvage detected; ManualReview = human gate triggered"
+    },
+    {
+      "name": "CompletedDate",
+      "type": "DateTime",
+      "required": false,
+      "description": "UTC timestamp when all sources were checked and result was written"
+    }
+  ],
+  "permissions": {
+    "flowServiceAccount": "Contribute",
+    "endUsers": "Read",
+    "auditStaff": "Read"
+  }
+}

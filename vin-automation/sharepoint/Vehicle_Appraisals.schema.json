@@ -1,0 +1,66 @@
+{
+  "listTitle": "Vehicle_Appraisals",
+  "description": "Main appraisal record. The cloud flow updates this list with the final disposition after VIN checks complete.",
+  "columns": [
+    {
+      "name": "VIN",
+      "type": "Text",
+      "required": true,
+      "maxLength": 17
+    },
+    {
+      "name": "Make",
+      "type": "Text",
+      "required": false
+    },
+    {
+      "name": "Model",
+      "type": "Text",
+      "required": false
+    },
+    {
+      "name": "Year",
+      "type": "Number",
+      "required": false
+    },
+    {
+      "name": "PlateNumber",
+      "type": "Text",
+      "required": false
+    },
+    {
+      "name": "AppraisalStatus",
+      "type": "Choice",
+      "required": true,
+      "choices": ["Draft", "VINCheckPending", "VINCheckComplete", "Approved", "Rejected", "TradeOnly"],
+      "defaultValue": "Draft"
+    },
+    {
+      "name": "VINCheckRunId",
+      "type": "Text",
+      "required": false,
+      "description": "RunId of the most recent VIN check linked to this appraisal"
+    },
+    {
+      "name": "VINDisposition",
+      "type": "Choice",
+      "required": false,
+      "choices": ["Clear", "TradeOnly", "ManualReview", "Pending"]
+    },
+    {
+      "name": "LastCheckedDate",
+      "type": "DateTime",
+      "required": false
+    },
+    {
+      "name": "AssignedTo",
+      "type": "Person",
+      "required": false
+    }
+  ],
+  "permissions": {
+    "flowServiceAccount": "Contribute",
+    "appraisalStaff": "Edit",
+    "readOnlyStaff": "Read"
+  }
+}
